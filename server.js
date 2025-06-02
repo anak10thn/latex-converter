@@ -11,9 +11,48 @@ const port = 50458;
 app.use(cors());
 app.use(express.json());
 
+function makeid(length) {
+    var result           = '';
+    var characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    var charactersLength = characters.length;
+    for ( var i = 0; i < length; i++ ) {
+        result += characters.charAt(Math.floor(Math.random() * charactersLength));
+    }
+    return result;
+}
+
+async function findBibFiles(directory) {
+    let results = [];
+    
+    try {
+      const items = await fs.readdir(directory);
+      
+      for (const item of items) {
+        const fullPath = path.join(directory, item);
+        const stat = await fs.stat(fullPath);
+        
+        if (stat.isDirectory()) {
+          // Recursively search subdirectories
+          const subResults = await findBibFiles(fullPath);
+          results = results.concat(subResults);
+        } else if (path.extname(item) === '.bib') {
+          // Add .bib files to results
+          results.push(fullPath);
+        }
+      }
+    } catch (err) {
+      console.error(`Error searching in ${directory}:`, err);
+    }
+    
+    return results;
+}
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const dir = path.join(__dirname, 'uploads');
+        const fileid = makeid(5)
+        const dir = path.join(__dirname, `uploads/${fileid}`);
+        req.dir = dir;
+        fs.mkdirSync(dir);
         fs.ensureDirSync(dir);
         cb(null, dir);
     },
@@ -36,7 +75,7 @@ app.post('/convert', upload.fields([
         const latexFile = req.files['latex'][0];
         const bibFile = req.files['bib'] ? req.files['bib'][0] : null;
         
-        const workDir = path.join(__dirname, 'uploads');
+        const workDir = req.dir;
         const outputDir = path.join(__dirname, 'output');
         fs.ensureDirSync(outputDir);
 
@@ -45,6 +84,7 @@ app.post('/convert', upload.fields([
 
         // If there's a bibliography file, we need multiple compilation passes
         if (bibFile) {
+            console.log("with bib")
             await new Promise((resolve, reject) => {
                 exec(`cd ${workDir} && pdflatex ${latexFile.filename} && bibtex ${baseName} && pdflatex ${latexFile.filename} && pdflatex ${latexFile.filename}`,
                     (error, stdout, stderr) => {
@@ -56,6 +96,7 @@ app.post('/convert', upload.fields([
                     });
             });
         } else {
+            console.log("no bib")
             // Single pass for documents without bibliography
             await new Promise((resolve, reject) => {
                 exec(`cd ${workDir} && pdflatex ${latexFile.filename}`,
@@ -67,6 +108,19 @@ app.post('/convert', upload.fields([
                         resolve();
                     });
             });
+            const bibFiles = await findBibFiles(workDir);
+            if(bibFiles.length > 0){
+                await new Promise((resolve, reject) => {
+                    exec(`cd ${workDir} && pdflatex ${latexFile.filename} && bibtex ${baseName} && pdflatex ${latexFile.filename} && pdflatex ${latexFile.filename}`,
+                        (error, stdout, stderr) => {
+                            if (error) {
+                                console.error('LaTeX Error:', error);
+                                return reject(error);
+                            }
+                            resolve();
+                        });
+                });
+            }
         }
 
         // Move the generated PDF to output directory

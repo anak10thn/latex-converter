@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+uploads/*
+output/*
+*.pdf
+.git
+.gitignore
+.env
+*.aux
+*.log
+*.bbl
+*.blg
+*.out
+server.log
